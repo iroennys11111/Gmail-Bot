@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: email-generator-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: API_ID
+        value: 14681595
+      - key: API_HASH
+        value: a86730aab5c59953c424abb4396d32d5
+      - key: BOT_TOKEN
+        value: 7983103020:AAHKsv6zTBPE0bcGYKO2EGyiKQXk8y38gwQ
+    plan: free
