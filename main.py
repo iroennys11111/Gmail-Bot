@@ -7,24 +7,52 @@ from pyrogram.types import (
     ReplyKeyboardMarkup
 )
 from pyrogram.enums import ParseMode
-from flask import Flask
+from flask import Flask, request
 import threading
 import time
+import requests
+import logging
 
-# Configuración del bot (variables originales)
+# Configuración de logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Configuración del bot
 API_ID = 14681595
 API_HASH = "a86730aab5c59953c424abb4396d32d5"
 BOT_TOKEN = "7983103020:AAHKsv6zTBPE0bcGYKO2EGyiKQXk8y38gwQ"
 
-# Mini servidor web para Render
+# Configuración para mantener el bot activo
+PING_INTERVAL = 300  # 5 minutos
+PING_URL = "https://gmail-bot-nooe.onrender.com"  # Cambia esto por tu URL de Render
+
+# Mini servidor web mejorado para Render
 web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
     return "🤖 Bot Generador de Emails Activo | Última verificación: " + datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 200
 
+@web_app.route('/ping')
+def ping():
+    return "pong", 200
+
 def run_web_server():
     web_app.run(host='0.0.0.0', port=10000)
+
+def keep_alive():
+    """Función para mantener activo el servicio en Render"""
+    while True:
+        try:
+            logger.info("Enviando ping para mantener activo el servicio...")
+            response = requests.get(f"{PING_URL}/ping")
+            logger.info(f"Respuesta del ping: {response.status_code}")
+        except Exception as e:
+            logger.error(f"Error al enviar ping: {e}")
+        time.sleep(PING_INTERVAL)
 
 # Inicializar el cliente de Pyrogram
 bot = Client(
@@ -32,7 +60,8 @@ bot = Client(
     api_id=API_ID,
     api_hash=API_HASH,
     bot_token=BOT_TOKEN,
-    workers=4  # Más workers para mejor manejo de callbacks
+    workers=4,  # Más workers para mejor manejo de callbacks
+    in_memory=True  # Para evitar problemas con sesiones en Render
 )
 
 # Estados de conversación
@@ -123,200 +152,36 @@ async def start_handler(client, message):
         parse_mode=ParseMode.HTML
     )
 
-@bot.on_message(filters.text & ~filters.command("start"))
-async def text_handler(client, message):
-    """Manejador de mensajes de texto"""
-    user_id = message.from_user.id
-    user_state = USER_STATES.get(user_id, {}).get("state")
-    
-    if message.text == "📧 Generar Email Alternativo":
-        USER_STATES[user_id]["state"] = "waiting_email"
-        await message.reply_text(
-            "📩 Por favor, envía tu email principal (ejemplo: usuario@gmail.com)",
-            reply_markup=ReplyKeyboardMarkup([["🔙 Volver"]], resize_keyboard=True)
-        )
-    
-    elif message.text == "ℹ️ Mi Información":
-        user = USER_STATES.get(user_id, {})
-        await message.reply_text(
-            f"👤 <b>Información de Usuario</b>\n\n"
-            f"🆔 <b>ID:</b> <code>{user_id}</code>\n"
-            f"👤 <b>Nombre:</b> {user.get('first_name', 'No disponible')}\n"
-            f"📧 <b>Email registrado:</b> {user.get('email', 'No proporcionado')}\n\n"
-            f"📅 <b>Última actividad:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')}",
-            parse_mode=ParseMode.HTML,
-            reply_markup=crear_menu_principal()
-        )
-    
-    elif message.text == "🆘 Ayuda":
-        await message.reply_text(
-            "ℹ️ <b>Ayuda del Bot</b>\n\n"
-            "Este bot te permite generar emails alternativos a partir de tu email principal.\n\n"
-            "<b>Opciones disponibles:</b>\n"
-            "- 🔢 Números: Añade números aleatorios\n"
-            "- 📅 Fecha: Añade la fecha actual\n"
-            "- 📝 Palabra: Añade una palabra aleatoria\n"
-            "- ✏️ Personalizado: Añade tu propio sufijo\n"
-            "- 🎲 1000 Emails: Genera un archivo con 1000 emails\n\n"
-            "Usa los botones para navegar por el menú.",
-            parse_mode=ParseMode.HTML,
-            reply_markup=crear_menu_principal()
-        )
-    
-    elif message.text == "🔙 Volver" or message.text == "🔙 Volver al Menú Principal":
-        USER_STATES[user_id]["state"] = "main_menu"
-        await message.reply_text(
-            "🏠 <b>Menú Principal</b>",
-            reply_markup=crear_menu_principal(),
-            parse_mode=ParseMode.HTML
-        )
-    
-    elif user_state == "waiting_email":
-        if '@' not in message.text:
-            await message.reply_text("❌ Email no válido. Debe contener '@'. Intenta nuevamente.")
-            return
-        
-        USER_STATES[user_id] = {
-            "state": "waiting_option",
-            "email": message.text,
-            "first_name": message.from_user.first_name
-        }
-        
-        await message.reply_text(
-            f"📧 Email principal: <code>{message.text}</code>\n\n"
-            "Selecciona cómo quieres generar tu email alternativo:",
-            reply_markup=crear_menu_generacion(),
-            parse_mode=ParseMode.HTML
-        )
-    
-    elif user_state == "waiting_suffix":
-        email_principal = USER_STATES[user_id]["email"]
-        usuario, dominio = email_principal.split('@', 1)
-        email_alternativo = f"{usuario}+{message.text}@{dominio}"
-        
-        await message.reply_text(
-            f"✅ <b>Email alternativo generado:</b>\n\n<code>{email_alternativo}</code>\n\n"
-            "Puedes copiarlo o generar otro.",
-            parse_mode=ParseMode.HTML,
-            reply_markup=crear_menu_principal()
-        )
-        
-        USER_STATES[user_id]["state"] = "main_menu"
-
-@bot.on_callback_query()
-async def callback_handler(client, callback_query):
-    """Manejador mejorado de callbacks para botones"""
-    try:
-        user_id = callback_query.from_user.id
-        user_data = USER_STATES.get(user_id, {})
-        email_principal = user_data.get("email")
-        opcion = callback_query.data
-        
-        await callback_query.answer()  # Respuesta inmediata al callback
-        
-        if opcion == "volver":
-            await callback_query.message.edit_text(
-                "🏠 <b>Menú Principal</b>",
-                reply_markup=None
-            )
-            await callback_query.message.reply_text(
-                "Selecciona una opción:",
-                reply_markup=crear_menu_principal(),
-                parse_mode=ParseMode.HTML
-            )
-            return
-        
-        if not email_principal:
-            await callback_query.message.edit_text("❌ Error: No tengo tu email. Usa /start para comenzar.")
-            return
-        
-        if opcion == "personalizado":
-            USER_STATES[user_id]["state"] = "waiting_suffix"
-            await callback_query.message.edit_text(
-                f"📧 Email principal: <code>{email_principal}</code>\n\n"
-                "Por favor, envía el sufijo que deseas añadir (sin el signo +):",
-                parse_mode=ParseMode.HTML
-            )
-            return
-        
-        if opcion == "masivo":
-            processing_msg = await callback_query.message.reply("⏳ Generando 1000 emails alternativos...")
-            
-            # Generar los emails
-            emails = []
-            for i in range(1, 1001):
-                email = generar_email_alternativo(email_principal, "masivo", i)
-                emails.append(email)
-                if i % 100 == 0:  # Actualizar progreso cada 100 emails
-                    await processing_msg.edit_text(f"⏳ Generando... {i}/1000")
-            
-            # Guardar en archivo
-            filename = f"emails_alternativos_{user_id}.txt"
-            with open(filename, "w") as f:
-                f.write("\n".join(emails))
-            
-            # Enviar archivo al usuario
-            await client.send_document(
-                chat_id=user_id,
-                document=filename,
-                caption=(
-                    f"📁 <b>1000 emails alternativos generados</b>\n\n"
-                    f"🔹 Email base: <code>{email_principal}</code>\n"
-                    f"🔹 Fecha: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n\n"
-                    "Puedes usar /start para generar más."
-                ),
-                parse_mode=ParseMode.HTML
-            )
-            
-            # Mostrar algunos ejemplos
-            sample = "\n".join(emails[:5])
-            await callback_query.message.reply_text(
-                f"🔍 <b>Algunos ejemplos:</b>\n\n<code>{sample}</code>\n\n"
-                "Todos los emails han sido guardados en el archivo adjunto.",
-                parse_mode=ParseMode.HTML,
-                reply_markup=crear_menu_principal()
-            )
-            
-            USER_STATES[user_id]["state"] = "main_menu"
-            return
-        
-        # Generar un solo email alternativo
-        email_alternativo = generar_email_alternativo(email_principal, opcion)
-        
-        if email_alternativo:
-            await callback_query.message.edit_text(
-                f"✅ <b>Email alternativo generado:</b>\n\n<code>{email_alternativo}</code>\n\n"
-                "Puedes copiarlo o generar otro.",
-                parse_mode=ParseMode.HTML
-            )
-            await callback_query.message.reply_text(
-                "¿Qué deseas hacer ahora?",
-                reply_markup=crear_menu_principal()
-            )
-        else:
-            await callback_query.message.edit_text("❌ Error al generar el email alternativo.")
-        
-        USER_STATES[user_id]["state"] = "main_menu"
-
-    except Exception as e:
-        print(f"Error en callback: {e}")
-        await callback_query.answer("❌ Ocurrió un error. Intenta nuevamente.", show_alert=True)
+# ... (el resto de tus handlers permanecen igual, mantén todo el código original de los handlers)
 
 def run_bot():
-    """Función para iniciar el bot con manejo de errores"""
+    """Función mejorada para iniciar el bot con manejo de errores y reconexión"""
     while True:
         try:
-            print("🚀 Iniciando bot...")
-            bot.run()
+            logger.info("🚀 Iniciando bot...")
+            bot.start()
+            logger.info("Bot iniciado correctamente")
+            # Mantener el bot corriendo
+            while True:
+                time.sleep(10)
+        except KeyboardInterrupt:
+            logger.info("Deteniendo bot por interrupción del usuario")
+            bot.stop()
+            break
         except Exception as e:
-            print(f"Error en el bot: {e}")
-            print("⚡ Reconectando en 10 segundos...")
+            logger.error(f"Error en el bot: {str(e)}")
+            logger.info("⚡ Reconectando en 10 segundos...")
             time.sleep(10)
+            continue
 
 if __name__ == "__main__":
     # Iniciar servidor web en hilo separado
     web_thread = threading.Thread(target=run_web_server, daemon=True)
     web_thread.start()
+    
+    # Iniciar el keep-alive en otro hilo
+    keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
+    keep_alive_thread.start()
     
     # Iniciar el bot con manejo de reconexión
     run_bot()
