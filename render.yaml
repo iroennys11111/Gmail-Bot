@@ -12,3 +12,4 @@ services:
       - key: BOT_TOKEN
         value: 7983103020:AAHKsv6zTBPE0bcGYKO2EGyiKQXk8y38gwQ
     plan: free
+    port: 10000
